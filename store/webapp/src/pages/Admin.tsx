@@ -112,7 +112,7 @@ function ProductsTab() {
     adminApi.products().then(setItems);
     adminApi.categories().then(setCats);
   };
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   if (!items) return <div className="text-muted">Загрузка...</div>;
 
@@ -354,7 +354,7 @@ function CategoriesTab() {
   const [form, setForm] = useState({ slug: '', name: '', icon: '', sort_order: 0 });
 
   const load = () => adminApi.categories().then(setItems);
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const create = async () => {
     if (!form.slug || !form.name) return;
@@ -423,7 +423,7 @@ function OrdersTab() {
   const [items, setItems] = useState<AdminOrder[] | null>(null);
   const [filter, setFilter] = useState<string>('');
   const load = () => adminApi.orders(filter || undefined).then(setItems);
-  useEffect(load, [filter]);
+  useEffect(() => { load(); }, [filter]);
 
   const STATUS_LABEL: Record<string, { color: string; label: string }> = {
     pending: { color: 'text-yellow-400', label: '⏳ Ожидает оплаты' },
@@ -500,7 +500,7 @@ function PromosTab() {
   const [items, setItems] = useState<AdminPromo[] | null>(null);
   const [form, setForm] = useState({ code: '', discount_pct: '', discount_fixed: '', max_uses: '', days: '' });
   const load = () => adminApi.promos().then(setItems);
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const create = async () => {
     if (!form.code) return;
@@ -596,7 +596,7 @@ function OperatorsTab() {
   const [items, setItems] = useState<AdminOperator[] | null>(null);
   const [form, setForm] = useState({ id: '', name: '' });
   const load = () => adminApi.operators().then(setItems);
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const add = async () => {
     if (!form.id) return;
