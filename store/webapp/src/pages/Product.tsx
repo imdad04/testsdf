@@ -90,9 +90,9 @@ export default function Product() {
 
         <input
           value={promo}
-          onChange={(e) => setPromo(e.target.value)}
+          onChange={(e) => setPromo(e.target.value.toUpperCase())}
           placeholder="🎟 Промокод (если есть)"
-          className="w-full bg-card border border-white/5 rounded-2xl px-4 py-3 text-sm placeholder:text-muted focus:outline-none focus:border-accent"
+          className="w-full bg-card border border-white/5 rounded-2xl px-4 py-3 text-sm placeholder:text-muted focus:outline-none focus:border-accent uppercase"
         />
 
         <div>

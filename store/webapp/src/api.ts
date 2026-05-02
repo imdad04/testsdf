@@ -11,7 +11,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers || {}),
     },
   });
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) {
+    const text = await r.text();
+    let msg = text;
+    try {
+      const j = JSON.parse(text);
+      if (typeof j.detail === 'string') msg = j.detail;
+      else if (j.detail) msg = JSON.stringify(j.detail);
+    } catch {}
+    throw new Error(msg);
+  }
   return r.json();
 }
 

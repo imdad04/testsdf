@@ -34,16 +34,24 @@ async def get_or_create_user(session: AsyncSession, tg_user: dict) -> User:
     return user
 
 
+class InvalidPromoError(Exception):
+    """Raised when user-supplied promo code is invalid; surfaced to the client."""
+
+
 async def apply_promo(session: AsyncSession, code: str, base_amount: Decimal) -> tuple[Decimal, Promo | None]:
     if not code:
         return base_amount, None
-    promo = (await session.execute(select(Promo).where(Promo.code == code))).scalar_one_or_none()
-    if not promo or not promo.is_active:
-        return base_amount, None
+    # Promo codes are stored upper-case by the admin tools; normalize input.
+    normalized = code.strip().upper()
+    promo = (await session.execute(select(Promo).where(Promo.code == normalized))).scalar_one_or_none()
+    if not promo:
+        raise InvalidPromoError("промокод не найден")
+    if not promo.is_active:
+        raise InvalidPromoError("промокод отключён")
     if promo.max_uses and promo.used_count >= promo.max_uses:
-        return base_amount, None
+        raise InvalidPromoError("количество активаций исчерпано")
     if promo.expires_at and promo.expires_at < datetime.utcnow():
-        return base_amount, None
+        raise InvalidPromoError("срок действия истёк")
     amount = base_amount
     if promo.discount_pct:
         amount = amount * (Decimal(100) - Decimal(promo.discount_pct)) / Decimal(100)

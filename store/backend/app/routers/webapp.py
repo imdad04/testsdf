@@ -18,7 +18,7 @@ from app.schemas import (
 )
 from app.security import AuthError, is_admin, parse_init_data
 from app.services.cryptobot import CryptoBotClient
-from app.services.orders import create_order, get_or_create_user
+from app.services.orders import InvalidPromoError, create_order, get_or_create_user
 from app.services.platega import PlategaClient
 
 router = APIRouter(prefix="/api", tags=["webapp"])
@@ -90,7 +90,10 @@ async def create_order_endpoint(
     except ValueError:
         raise HTTPException(400, "bad payment_method")
 
-    order, _ = await create_order(session, user, product, body.quantity, method, body.promo_code)
+    try:
+        order, _ = await create_order(session, user, product, body.quantity, method, body.promo_code)
+    except InvalidPromoError as e:
+        raise HTTPException(400, f"Промокод: {e}")
     await session.flush()
 
     return_url = f"{s.webapp_url}/orders/{order.id}"
