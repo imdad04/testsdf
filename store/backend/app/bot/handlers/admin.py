@@ -20,8 +20,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from datetime import datetime, timedelta
+
 from app.config import get_settings
-from app.models import Category, Operator, Order, OrderStatus, Product, User
+from app.models import Category, Operator, Order, OrderStatus, Product, Promo, User
 
 router = Router(name="admin")
 
@@ -300,3 +302,308 @@ async def cmd_unban(message: Message, sessionmaker: async_sessionmaker) -> None:
             u.is_banned = False
             await session.commit()
     await message.answer(f"✅ {uid} разбанен")
+
+
+# ============== Категории ==============
+@router.callback_query(F.data == "adm:cats")
+async def cb_cats(cq: CallbackQuery, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(cq.from_user.id):
+        await cq.answer()
+        return
+    async with sessionmaker() as session:
+        cats = (await session.execute(select(Category).order_by(Category.sort_order, Category.id))).scalars().all()
+    if cats:
+        lines = ["🗂 <b>Категории</b>\n"]
+        for c in cats:
+            mark = "✅" if c.is_active else "⛔"
+            lines.append(f"{mark} #{c.id} {c.icon or '✨'} {c.name} <i>({c.slug})</i>")
+    else:
+        lines = ["🗂 <b>Категории</b>\n", "<i>Пока ни одной категории.</i>"]
+    lines.append(
+        "\n<b>Команды:</b>\n"
+        "<code>/addcat slug Название 🎮</code> — создать\n"
+        "<code>/delcat &lt;id&gt;</code> — деактивировать"
+    )
+    await cq.message.edit_text("\n".join(lines), reply_markup=admin_menu_kb())
+    await cq.answer()
+
+
+@router.message(Command("delcat"))
+async def cmd_delcat(message: Message, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: <code>/delcat &lt;id&gt;</code>")
+        return
+    try:
+        cid = int(parts[1])
+    except ValueError:
+        return
+    async with sessionmaker() as session:
+        c = await session.get(Category, cid)
+        if not c:
+            await message.answer("Не найдена")
+            return
+        c.is_active = False
+        await session.commit()
+    await message.answer(f"✅ Категория #{cid} деактивирована")
+
+
+# ============== Заказы ==============
+_ORDER_STATUS_RU = {
+    "pending": "⏳ Ожидает оплаты",
+    "paid": "💰 Оплачен",
+    "in_progress": "🔧 В работе",
+    "delivered": "✅ Доставлен",
+    "cancelled": "❌ Отменён",
+    "refunded": "↩️ Возврат",
+}
+
+
+@router.callback_query(F.data == "adm:orders")
+async def cb_orders(cq: CallbackQuery, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(cq.from_user.id):
+        await cq.answer()
+        return
+    async with sessionmaker() as session:
+        rows = (
+            await session.execute(
+                select(Order, Product)
+                .join(Product, Product.id == Order.product_id)
+                .order_by(Order.created_at.desc())
+                .limit(15)
+            )
+        ).all()
+    if rows:
+        lines = ["📦 <b>Последние заказы</b>\n"]
+        for o, p in rows:
+            st = _ORDER_STATUS_RU.get(o.status, o.status)
+            lines.append(f"#{o.id} · {p.name} · {o.amount}₽ · {st}\n  <i>от user {o.user_id}, {o.created_at:%d.%m %H:%M}</i>")
+    else:
+        lines = ["📦 <b>Последние заказы</b>\n", "<i>Пока нет.</i>"]
+    lines.append(
+        "\n<b>Команды:</b>\n"
+        "<code>/order &lt;id&gt;</code> — детали заказа\n"
+        "<code>/refund &lt;id&gt;</code> — пометить возвратом"
+    )
+    await cq.message.edit_text("\n".join(lines), reply_markup=admin_menu_kb())
+    await cq.answer()
+
+
+@router.message(Command("order"))
+async def cmd_order(message: Message, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: <code>/order &lt;id&gt;</code>")
+        return
+    try:
+        oid = int(parts[1])
+    except ValueError:
+        return
+    async with sessionmaker() as session:
+        o = await session.get(Order, oid)
+        if not o:
+            await message.answer("Не найден")
+            return
+        p = await session.get(Product, o.product_id)
+    st = _ORDER_STATUS_RU.get(o.status, o.status)
+    await message.answer(
+        f"📦 <b>Заказ #{o.id}</b>\n"
+        f"Товар: <b>{p.name}</b> x{o.quantity}\n"
+        f"Сумма: <b>{o.amount} ₽</b>\n"
+        f"Статус: {st}\n"
+        f"Метод: {o.payment_method}\n"
+        f"User: <code>{o.user_id}</code>\n"
+        f"Создан: {o.created_at:%d.%m.%Y %H:%M}\n"
+        f"Оплачен: {o.paid_at:%d.%m.%Y %H:%M}" if o.paid_at else f"Оплата: ещё не пришла"
+    )
+
+
+@router.message(Command("refund"))
+async def cmd_refund(message: Message, bot, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        return
+    try:
+        oid = int(parts[1])
+    except ValueError:
+        return
+    from app.services.orders import operator_refund
+    async with sessionmaker() as session:
+        o = await operator_refund(session, bot, oid, message.from_user.id)
+    await message.answer(f"↩️ Заказ #{oid} помечен возвратом" if o else "Не найден или уже не в статусе для возврата")
+
+
+# ============== Операторы ==============
+@router.callback_query(F.data == "adm:ops")
+async def cb_ops(cq: CallbackQuery, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(cq.from_user.id):
+        await cq.answer()
+        return
+    async with sessionmaker() as session:
+        ops = (await session.execute(select(Operator).order_by(Operator.id))).scalars().all()
+    s = get_settings()
+    if ops:
+        lines = ["👥 <b>Операторы</b>\n"]
+        for o in ops:
+            mark = "✅" if o.is_active else "⛔"
+            lines.append(f"{mark} <code>{o.id}</code> {o.name or ''}")
+    else:
+        lines = ["👥 <b>Операторы</b>\n", "<i>Пока нет операторов в БД.</i>"]
+    lines.append(f"\n<b>Главный оператор</b> (из .env): <code>{s.operator_chat_id}</code>")
+    lines.append(
+        "\n<b>Команды:</b>\n"
+        "<code>/addop &lt;telegram_id&gt; &lt;имя&gt;</code> — добавить\n"
+        "<code>/delop &lt;telegram_id&gt;</code> — отключить"
+    )
+    await cq.message.edit_text("\n".join(lines), reply_markup=admin_menu_kb())
+    await cq.answer()
+
+
+@router.message(Command("addop"))
+async def cmd_addop(message: Message, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split(None, 2)
+    if len(parts) < 2:
+        await message.answer("Использование: <code>/addop &lt;telegram_id&gt; [имя]</code>")
+        return
+    try:
+        op_id = int(parts[1])
+    except ValueError:
+        await message.answer("ID должен быть числом")
+        return
+    name = parts[2] if len(parts) > 2 else None
+    async with sessionmaker() as session:
+        existing = await session.get(Operator, op_id)
+        if existing:
+            existing.is_active = True
+            existing.name = name or existing.name
+        else:
+            session.add(Operator(id=op_id, name=name, is_active=True))
+        await session.commit()
+    await message.answer(f"✅ Оператор {op_id} добавлен/активирован")
+
+
+@router.message(Command("delop"))
+async def cmd_delop(message: Message, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        return
+    try:
+        op_id = int(parts[1])
+    except ValueError:
+        return
+    async with sessionmaker() as session:
+        o = await session.get(Operator, op_id)
+        if o:
+            o.is_active = False
+            await session.commit()
+    await message.answer(f"⛔ Оператор {op_id} отключён")
+
+
+# ============== Промокоды ==============
+@router.callback_query(F.data == "adm:promos")
+async def cb_promos(cq: CallbackQuery, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(cq.from_user.id):
+        await cq.answer()
+        return
+    async with sessionmaker() as session:
+        promos = (await session.execute(select(Promo).order_by(Promo.id.desc()).limit(20))).scalars().all()
+    if promos:
+        lines = ["🎟 <b>Промокоды</b>\n"]
+        for p in promos:
+            mark = "✅" if p.is_active else "⛔"
+            disc = f"{p.discount_pct}%" if p.discount_pct else f"{p.discount_fixed}₽"
+            uses = f"{p.used_count}/{p.max_uses}" if p.max_uses else f"{p.used_count}/∞"
+            exp = f", до {p.expires_at:%d.%m}" if p.expires_at else ""
+            lines.append(f"{mark} <code>{p.code}</code> · -{disc} · {uses}{exp}")
+    else:
+        lines = ["🎟 <b>Промокоды</b>\n", "<i>Пока ни одного.</i>"]
+    lines.append(
+        "\n<b>Команды:</b>\n"
+        "<code>/addpromo КОД 10 100 30</code>\n"
+        "<i>= скидка 10%, лимит 100 активаций, срок 30 дней</i>\n"
+        "<code>/addpromofix КОД 50 100 30</code>\n"
+        "<i>= скидка 50₽ (фиксированная)</i>\n"
+        "<code>/delpromo КОД</code> — отключить"
+    )
+    await cq.message.edit_text("\n".join(lines), reply_markup=admin_menu_kb())
+    await cq.answer()
+
+
+@router.message(Command("addpromo"))
+async def cmd_addpromo(message: Message, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer("Использование: <code>/addpromo КОД процент [лимит] [дней]</code>")
+        return
+    code = parts[1].upper()
+    try:
+        pct = int(parts[2])
+        max_uses = int(parts[3]) if len(parts) > 3 else None
+        days = int(parts[4]) if len(parts) > 4 else None
+    except ValueError:
+        await message.answer("Цифры некорректны")
+        return
+    expires = datetime.utcnow() + timedelta(days=days) if days else None
+    async with sessionmaker() as session:
+        existing = (await session.execute(select(Promo).where(Promo.code == code))).scalar_one_or_none()
+        if existing:
+            await message.answer(f"Промокод {code} уже существует")
+            return
+        session.add(Promo(code=code, discount_pct=pct, max_uses=max_uses, expires_at=expires, is_active=True))
+        await session.commit()
+    await message.answer(f"✅ Промокод <code>{code}</code> создан: -{pct}%")
+
+
+@router.message(Command("addpromofix"))
+async def cmd_addpromofix(message: Message, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer("Использование: <code>/addpromofix КОД сумма_₽ [лимит] [дней]</code>")
+        return
+    code = parts[1].upper()
+    try:
+        fixed = Decimal(parts[2])
+        max_uses = int(parts[3]) if len(parts) > 3 else None
+        days = int(parts[4]) if len(parts) > 4 else None
+    except (ValueError, InvalidOperation):
+        await message.answer("Цифры некорректны")
+        return
+    expires = datetime.utcnow() + timedelta(days=days) if days else None
+    async with sessionmaker() as session:
+        existing = (await session.execute(select(Promo).where(Promo.code == code))).scalar_one_or_none()
+        if existing:
+            await message.answer(f"Промокод {code} уже существует")
+            return
+        session.add(Promo(code=code, discount_fixed=fixed, max_uses=max_uses, expires_at=expires, is_active=True))
+        await session.commit()
+    await message.answer(f"✅ Промокод <code>{code}</code> создан: -{fixed}₽")
+
+
+@router.message(Command("delpromo"))
+async def cmd_delpromo(message: Message, sessionmaker: async_sessionmaker) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        return
+    code = parts[1].upper()
+    async with sessionmaker() as session:
+        p = (await session.execute(select(Promo).where(Promo.code == code))).scalar_one_or_none()
+        if p:
+            p.is_active = False
+            await session.commit()
+    await message.answer(f"⛔ Промокод {code} отключён")

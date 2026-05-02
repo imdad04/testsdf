@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, Catalog } from '../api';
+import { Link } from 'react-router-dom';
+import { api, Catalog, Me } from '../api';
 import CategoryChip from '../components/CategoryChip';
 import Header from '../components/Header';
 import ProductCard from '../components/ProductCard';
@@ -8,12 +9,14 @@ const ALL_CHIP = { id: null, name: 'Все', icon: '⚡' } as const;
 
 export default function Home() {
   const [data, setData] = useState<Catalog | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [activeCat, setActiveCat] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.catalog().then(setData).catch((e) => setError(String(e)));
+    api.me().then(setMe).catch(() => {});
   }, []);
 
   const filtered = useMemo(() => {
@@ -39,6 +42,17 @@ export default function Home() {
   return (
     <>
       <Header title="Маркетплейс" subtitle="Выбери свой товар" />
+
+      {me?.is_admin && (
+        <div className="px-5 mb-2">
+          <Link
+            to="/admin"
+            className="block bg-gradient-to-r from-accent to-accentSoft rounded-2xl px-4 py-3 text-sm font-semibold shadow-glow"
+          >
+            ⚙️ Открыть админку
+          </Link>
+        </div>
+      )}
 
       <div className="px-5">
         <input
