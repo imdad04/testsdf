@@ -1,6 +1,13 @@
 """Platega payment integration.
 
 Docs: https://docs.platega.io
+
+Required fields per current API:
+- id: GUID/UUID (NOT a string like "buta-1-abc")
+- command: operation type ("pay" or whatever Platega expects)
+- paymentMethod: int
+- paymentDetails: { amount, currency }
+- description, return, failedUrl, webhookUrl, payload
 """
 
 from decimal import Decimal
@@ -38,10 +45,12 @@ class PlategaClient:
         webhook_url: str,
     ) -> dict:
         """Create payment session, return {payment_id, payment_url}."""
-        payment_id = f"buta-{order_id}-{uuid4().hex[:8]}"
+        # Platega requires a valid UUID for `id`
+        invoice_uuid = str(uuid4())
         payload = {
-            "paymentMethod": 1,
-            "id": payment_id,
+            "command": "pay",                  # required by Platega
+            "paymentMethod": 1,                # 1 = card
+            "id": invoice_uuid,
             "paymentDetails": {
                 "amount": float(amount),
                 "currency": "RUB",
@@ -49,6 +58,7 @@ class PlategaClient:
             "description": description,
             "return": return_url,
             "failedUrl": return_url,
+            # `payload` carries our internal order id back through the webhook
             "payload": str(order_id),
             "webhookUrl": webhook_url,
         }
@@ -62,27 +72,36 @@ class PlategaClient:
             raise PlategaError(f"platega error {r.status_code}: {r.text}")
         data = r.json()
         return {
-            "payment_id": payment_id,
-            "payment_url": data.get("redirect") or data.get("url") or data.get("paymentUrl"),
+            "payment_id": invoice_uuid,
+            "payment_url": (
+                data.get("redirect")
+                or data.get("url")
+                or data.get("paymentUrl")
+                or data.get("paymentLink")
+            ),
             "raw": data,
         }
 
     @staticmethod
     def parse_webhook(payload: dict) -> dict | None:
-        """Return {order_id, payment_id, status, amount} from webhook body or None."""
+        """Return {order_id, payment_id, status, amount} from webhook body or None.
+
+        Our internal order id was passed in `payload` field at create time,
+        so we read it back from there.
+        """
         status_raw = (payload.get("status") or "").upper()
         if status_raw not in {"CONFIRMED", "PAID", "SUCCESS"}:
             return None
-        order_id_raw = payload.get("payload") or payload.get("orderId") or payload.get("id")
+        order_id_raw = payload.get("payload") or payload.get("orderId")
         if not order_id_raw:
             return None
         try:
-            order_id = int(str(order_id_raw).split("-")[1]) if "-" in str(order_id_raw) else int(order_id_raw)
-        except (ValueError, IndexError):
+            order_id = int(str(order_id_raw))
+        except ValueError:
             return None
         return {
             "order_id": order_id,
-            "payment_id": str(payload.get("id") or order_id_raw),
+            "payment_id": str(payload.get("id") or ""),
             "status": "paid",
             "amount": Decimal(str(payload.get("amount") or 0)),
         }
