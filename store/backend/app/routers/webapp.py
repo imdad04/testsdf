@@ -97,10 +97,13 @@ async def create_order_endpoint(
     desc = f"BUTA STORE: {product.name} x{body.quantity}"
 
     if method == PaymentMethod.PLATEGA:
-        webhook = f"{s.webapp_url.replace('5173', '8000')}/webhooks/platega"
         try:
             inv = await PlategaClient().create_invoice(
-                order.id, order.amount, desc, return_url, webhook
+                order_id=order.id,
+                user_tg_id=user.id,
+                amount=order.amount,
+                description=desc,
+                return_url=return_url,
             )
         except Exception as e:
             await session.rollback()

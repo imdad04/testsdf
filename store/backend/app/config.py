@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     platega_merchant_id: str
     platega_api_key: str
     platega_base_url: str = "https://app.platega.io/transaction"
-    # Platega payment method code. Common: "SBP" (instant transfer), "CARD"
-    platega_method: str = "SBP"
+    # Platega payment method enum value (int). Try 2 for SBP, 1 for card, etc.
+    # Find the right one in Platega merchant cabinet.
+    platega_method: int = 2
 
     cryptobot_token: str = ""
     cryptobot_base_url: str = "https://pay.crypt.bot/api"

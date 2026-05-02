@@ -1,14 +1,16 @@
 """Payment provider webhooks (Platega + CryptoBot).
 
-These are called by the providers' servers, not the WebApp. They're idempotent:
+These are called by the providers' servers, not the WebApp. Idempotent:
 calling them multiple times for the same payment is safe.
 """
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.bot_singleton import get_bot
 from app.db import get_session
+from app.models import Order
 from app.services.cryptobot import CryptoBotClient
 from app.services.orders import mark_paid
 from app.services.platega import PlategaClient
@@ -25,8 +27,22 @@ async def platega_webhook(
     parsed = PlategaClient.parse_webhook(payload)
     if not parsed:
         return {"ok": True, "ignored": True}
+
+    # Platega callback doesn't echo our `payload` field, so we identify
+    # the order by the transactionId we stored in payment_id at create time.
+    order = (
+        await session.execute(
+            select(Order).where(Order.payment_id == parsed["platega_id"])
+        )
+    ).scalar_one_or_none()
+    if not order:
+        return {"ok": True, "ignored": True, "reason": "order not found"}
+
+    if parsed["status"] != "paid":
+        return {"ok": True, "ignored": True, "reason": parsed["status"]}
+
     bot = get_bot()
-    ok = await mark_paid(session, bot, parsed["order_id"], parsed["payment_id"])
+    ok = await mark_paid(session, bot, order.id, parsed["platega_id"])
     return {"ok": True, "marked": ok}
 
 
