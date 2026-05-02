@@ -1,0 +1,27 @@
+services:
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  backend:
+    ports: !reset []
+    environment:
+      APP_ENV: prod
+  webapp:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile.prod
+    ports: !reset []
+    environment:
+      VITE_API_URL: ""    # served same-origin via nginx
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on: [backend, webapp]
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    ports:
+      - "80:80"
+      - "443:443"
