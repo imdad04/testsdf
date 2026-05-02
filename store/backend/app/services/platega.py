@@ -48,8 +48,8 @@ class PlategaClient:
         # Platega requires a valid UUID for `id`
         invoice_uuid = str(uuid4())
         payload = {
-            "command": "pay",                  # required by Platega
-            "paymentMethod": 1,                # 1 = card
+            "command": "pay",                          # required by Platega
+            "paymentMethod": get_settings().platega_method,
             "id": invoice_uuid,
             "paymentDetails": {
                 "amount": float(amount),

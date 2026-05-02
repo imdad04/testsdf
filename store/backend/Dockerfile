@@ -21,4 +21,6 @@ RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
-CMD ["/app/entrypoint.sh"]
+# Use `sh` explicitly so missing exec bit on bind-mounted entrypoint.sh
+# (common when pushing from Windows) doesn't break the container.
+CMD ["sh", "/app/entrypoint.sh"]
