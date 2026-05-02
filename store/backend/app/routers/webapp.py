@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import get_session
 from app.models import Category, Order, OrderStatus, PaymentMethod, Product
+from decimal import Decimal
+
 from app.schemas import (
     CatalogOut,
     CategoryOut,
@@ -15,10 +17,12 @@ from app.schemas import (
     OrderListOut,
     OrderOut,
     ProductOut,
+    PromoCheckIn,
+    PromoCheckOut,
 )
 from app.security import AuthError, is_admin, parse_init_data
 from app.services.cryptobot import CryptoBotClient
-from app.services.orders import InvalidPromoError, create_order, get_or_create_user
+from app.services.orders import InvalidPromoError, apply_promo, create_order, get_or_create_user
 from app.services.platega import PlategaClient
 
 router = APIRouter(prefix="/api", tags=["webapp"])
@@ -134,6 +138,36 @@ async def create_order_endpoint(
         payment_url=order.payment_url,
         payment_method=order.payment_method,
         created_at=order.created_at,
+    )
+
+
+@router.post("/promos/check", response_model=PromoCheckOut)
+async def check_promo(
+    body: PromoCheckIn,
+    session: AsyncSession = Depends(get_session),
+):
+    """Validate a promo code against a product+quantity.
+    Returns discount preview without creating an order."""
+    await _auth(body.init_data)
+    if not body.code.strip():
+        raise HTTPException(400, "Промокод: пусто")
+    product = await session.get(Product, body.product_id)
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    base = product.price * Decimal(body.quantity)
+    try:
+        amount, promo = await apply_promo(session, body.code, base)
+    except InvalidPromoError as e:
+        raise HTTPException(400, f"Промокод: {e}")
+    if not promo:
+        raise HTTPException(400, "Промокод не применился")
+    return PromoCheckOut(
+        code=promo.code,
+        discount_pct=promo.discount_pct,
+        discount_fixed=promo.discount_fixed,
+        discount=base - amount,
+        amount=amount,
+        base=base,
     )
 
 

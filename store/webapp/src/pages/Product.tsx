@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, Catalog, Product as ProductT } from '../api';
+import { api, Catalog, Product as ProductT, PromoCheck } from '../api';
 import Header from '../components/Header';
 import { haptic, openExternal } from '../telegram';
 
@@ -10,6 +10,9 @@ export default function Product() {
   const [data, setData] = useState<ProductT | null>(null);
   const [qty, setQty] = useState(1);
   const [promo, setPromo] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState<PromoCheck | null>(null);
+  const [promoChecking, setPromoChecking] = useState(false);
+  const [promoError, setPromoError] = useState<string | null>(null);
   const [method, setMethod] = useState<'platega' | 'cryptobot'>('platega');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +23,33 @@ export default function Product() {
     });
   }, [id]);
 
+  // если меняется кол-во или код — сбрасываем применённый промо
+  useEffect(() => {
+    setAppliedPromo(null);
+    setPromoError(null);
+  }, [qty, promo]);
+
+  const checkPromo = async () => {
+    if (!data || !promo.trim()) return;
+    setPromoChecking(true);
+    setPromoError(null);
+    try {
+      const res = await api.checkPromo({
+        code: promo.trim(),
+        product_id: data.id,
+        quantity: qty,
+      });
+      setAppliedPromo(res);
+      haptic('success');
+    } catch (e: any) {
+      setAppliedPromo(null);
+      setPromoError(e.message || String(e));
+      haptic('error');
+    } finally {
+      setPromoChecking(false);
+    }
+  };
+
   const buy = async () => {
     if (!data) return;
     setBusy(true);
@@ -29,7 +59,7 @@ export default function Product() {
         product_id: data.id,
         quantity: qty,
         payment_method: method,
-        promo_code: promo || undefined,
+        promo_code: appliedPromo?.code || undefined,
       });
       haptic('success');
       if (order.payment_url) {
@@ -88,12 +118,49 @@ export default function Product() {
           </div>
         </div>
 
-        <input
-          value={promo}
-          onChange={(e) => setPromo(e.target.value.toUpperCase())}
-          placeholder="🎟 Промокод (если есть)"
-          className="w-full bg-card border border-white/5 rounded-2xl px-4 py-3 text-sm placeholder:text-muted focus:outline-none focus:border-accent uppercase"
-        />
+        <div>
+          <div className="flex gap-2">
+            <input
+              value={promo}
+              onChange={(e) => setPromo(e.target.value.toUpperCase())}
+              disabled={!!appliedPromo}
+              placeholder="🎟 Промокод"
+              className="flex-1 bg-card border border-white/5 rounded-2xl px-4 py-3 text-sm placeholder:text-muted focus:outline-none focus:border-accent uppercase disabled:opacity-50"
+            />
+            {appliedPromo ? (
+              <button
+                onClick={() => {
+                  setAppliedPromo(null);
+                  setPromo('');
+                  setPromoError(null);
+                }}
+                className="px-4 bg-cardSoft rounded-2xl text-sm font-semibold"
+              >
+                ✕
+              </button>
+            ) : (
+              <button
+                onClick={checkPromo}
+                disabled={promoChecking || !promo.trim()}
+                className="px-4 bg-accent rounded-2xl text-sm font-semibold disabled:opacity-50"
+              >
+                {promoChecking ? '...' : 'Применить'}
+              </button>
+            )}
+          </div>
+          {appliedPromo && (
+            <div className="mt-2 bg-green-500/10 border border-green-500/30 rounded-2xl px-4 py-2 text-sm">
+              ✅ <b>{appliedPromo.code}</b> применён · скидка{' '}
+              {appliedPromo.discount_pct
+                ? `${appliedPromo.discount_pct}%`
+                : `${appliedPromo.discount_fixed}₽`}{' '}
+              <span className="text-muted">(−{Number(appliedPromo.discount).toFixed(2)}₽)</span>
+            </div>
+          )}
+          {promoError && (
+            <div className="mt-2 text-red-400 text-sm">{promoError}</div>
+          )}
+        </div>
 
         <div>
           <div className="text-sm text-muted mb-2">Способ оплаты</div>
@@ -124,7 +191,19 @@ export default function Product() {
           onClick={buy}
           className="w-full bg-accent disabled:opacity-50 text-white font-bold py-4 rounded-2xl shadow-glow"
         >
-          {busy ? 'Создаю заказ...' : `Оплатить ${Number(data.price) * qty} ₽`}
+          {busy ? (
+            'Создаю заказ...'
+          ) : appliedPromo ? (
+            <>
+              Оплатить{' '}
+              <span className="line-through opacity-60 text-sm">
+                {Number(appliedPromo.base).toFixed(0)}₽
+              </span>{' '}
+              {Number(appliedPromo.amount).toFixed(0)}₽
+            </>
+          ) : (
+            `Оплатить ${Number(data.price) * qty} ₽`
+          )}
         </button>
       </div>
     </>

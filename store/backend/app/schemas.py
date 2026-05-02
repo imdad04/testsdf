@@ -59,3 +59,19 @@ class MeOut(BaseModel):
     balance: Decimal
     cashback: Decimal
     is_admin: bool
+
+
+class PromoCheckIn(BaseModel):
+    init_data: str
+    code: str
+    product_id: int
+    quantity: int = Field(default=1, ge=1, le=10)
+
+
+class PromoCheckOut(BaseModel):
+    code: str
+    discount_pct: int
+    discount_fixed: Decimal
+    discount: Decimal
+    amount: Decimal
+    base: Decimal

@@ -61,6 +61,15 @@ export type OrderCreated = {
   created_at: string;
 };
 
+export type PromoCheck = {
+  code: string;
+  discount_pct: number;
+  discount_fixed: string;
+  discount: string;
+  amount: string;
+  base: string;
+};
+
 export const api = {
   catalog: () => req<Catalog>('/api/catalog'),
   me: () => req<Me>('/api/me'),
@@ -72,6 +81,14 @@ export const api = {
     promo_code?: string;
   }) =>
     req<OrderCreated>('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...body,
+        init_data: getInitData(),
+      }),
+    }),
+  checkPromo: (body: { code: string; product_id: number; quantity: number }) =>
+    req<PromoCheck>('/api/promos/check', {
       method: 'POST',
       body: JSON.stringify({
         ...body,
